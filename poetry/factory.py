@@ -6,6 +6,7 @@ import shutil
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Union
 
 from clikit.api.io.io import IO
 
@@ -45,7 +46,7 @@ class Factory:
         local_config = local_config["tool"]["poetry"]
 
         # Checking validity
-        check_result = self.validate(local_config)
+        check_result = self.validate(local_config)  # will patch version in config
         if check_result["errors"]:
             message = ""
             for error in check_result["errors"]:
@@ -259,6 +260,19 @@ class Factory:
         )
 
     @classmethod
+    def read_version(cls, version):  # type: (Union[str, Dict[str, str]]) -> str
+        if isinstance(version, str):
+            return version
+        # at this point version should have structure like {'path': 'module.module.__version__'}
+        path_to_version = version["path"]
+        module, variable = path_to_version.split(":")
+        module = __import__(module)
+        version = getattr(module, variable, None)
+        if not isinstance(version, str):
+            raise ValueError("Invalid version type, expected string.")
+        return version
+
+    @classmethod
     def validate(
         cls, config, strict=False
     ):  # type: (dict, bool) -> Dict[str, List[str]]
@@ -270,6 +284,13 @@ class Factory:
         validation_errors = validate_object(config, "poetry-schema")
 
         result["errors"] += validation_errors
+
+        try:
+            version = cls.read_version(config['version'])
+        except (ImportError, ValueError) as e:
+            version = ""  # poetry will throw an error anyway, so just make sure that this is string
+            result["errors"].append("Error while reading version: {}".format(str(e)))
+        config["version"] = version
 
         if strict:
             # If strict, check the file more thoroughly
